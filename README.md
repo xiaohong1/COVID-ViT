@@ -5,7 +5,7 @@ COVID-VIT: Classification of Covid-19 from CT chest images based on vision trans
 
 This code is to response to te MIA-COV19 competition on classification of covid from non-covid chest volumetric CT datasets.
 
-Pre-trained models for ViT and DenseNet can be download from https://drive.google.com/drive/folders/1nBI02F-8Y0hFeN10CMu9Svj4xRViN5xt. 
+Pre-trained models for ViT and DenseNet can be download from https://drive.google.com/drive/folders/1nBI02F-8Y0hFeN10CMu9Svj4xRViN5xt?usp=sharing. 
 
 Both 2D and 3D versions of training and test code are provided. It appears classificaiton based on 2D slices performs better. The final score is subject based, i.e. for a dataset, if more than 25% or more slices are classfied as COVID, then this subject has COVID. Otherwise, the patient in concern will be classified as normal. This threshold (e.g 25%) can be determined from validation stage.
 
