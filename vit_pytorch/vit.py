@@ -18,13 +18,11 @@ class PreNorm(nn.Module):
         self.norm = nn.LayerNorm(dim)
         self.fn = fn
     def forward(self, x, **kwargs):
-        #print('xg-x=',x)
         return self.fn(self.norm(x), **kwargs)
 
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout = 0.):
         super().__init__()
-#        print('dim,hidden_din=',dim, hidden_dim)
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
             nn.GELU(),
@@ -68,71 +66,63 @@ class Attention(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
         super().__init__()
-        print('transformer:,input=',dim, depth, heads,dim_head,mlp_dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
                 PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout))
             ]))
-        print('2:ViT:dim,mlp_dim=',dim,mlp_dim)
     def forward(self, x):
         for attn, ff in self.layers:
             x = attn(x) + x
             x = ff(x) + x
-        print('transformer,x=',x)
         return x
 
 class ViT(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, channels = 1, dim_head=256, dropout = 0., emb_dropout = 0. ):
-
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 1, dim_head = 64, dropout = 0., emb_dropout = 0.):
         super().__init__()
-        assert image_size % patch_size == 0, 'image dimensions must be divisible by the patch size'
-        num_patches = (image_size // patch_size) ** 3 
-        patch_dim = channels * patch_size ** 3
-        print('xg:n_patches,p-dim, mlp_dim,depth=',num_patches,patch_dim, mlp_dim, depth)
-        self.patch_size = patch_size
+        image_height, image_width = pair(image_size)
+        patch_height, patch_width = pair(patch_size)
+
+        assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
+
+        num_patches = (image_height // patch_height) * (image_width // patch_width)
+        patch_dim = channels * patch_height * patch_width
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
+
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+            nn.Linear(patch_dim, dim),
+        )
 
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
-        self.patch_to_embedding = nn.Linear(patch_dim, dim)
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.dropout = nn.Dropout(emb_dropout)
-        #print('dim, mlp_dim=', dim, mlp_dim)
-        print('ViT3D:self-pos,patch2-embedding,cls_tokem,dropput=:',self.pos_embedding[0].shape, self.patch_to_embedding,self.cls_token[0].shape,self.dropout)
 
-        #print('ViT:dim,mlp_dim=',dim,mlp_dim)
+        print('sefl=', self.pos_embedding[0].shape, self.cls_token[0].shape,self.dropout)
+
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
-#        print('transfer=', self.transformer)
 
-        self.to_cls_token = nn.Identity()
+        self.pool = pool
+        self.to_latent = nn.Identity()
 
         self.mlp_head = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, mlp_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(mlp_dim, num_classes),
-            nn.Dropout(dropout)
+            nn.Linear(dim, num_classes)
         )
 
+    def forward(self, img):
+        x = self.to_patch_embedding(img)
+        b, n, _ = x.shape
 
-    def forward(self, img, mask = None):
-        p = self.patch_size
-
-        #x = rearrange(img, 'b c (w p1) (h p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
-        x = rearrange(img, 'b (d p3) (w p1) (h p2) -> b (w h d) (p1 p2 p3)',p1 = p, p2 = p, p3 = p)
-        print('p,x-shape, img-shape=',p, x.shape, img.shape)
-        x = self.patch_to_embedding(x)
-        
-        print('xg: x2embedding= ',x.shape)
-
-        cls_tokens = self.cls_token.expand(img.shape[0], -1, -1)
+        cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
         x = torch.cat((cls_tokens, x), dim=1)
-        x += self.pos_embedding
+        x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        #x = self.transformer(x, mask)
         x = self.transformer(x)
 
-        x = self.to_cls_token(x[:, 0])
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+
+        x = self.to_latent(x)
         return self.mlp_head(x)
